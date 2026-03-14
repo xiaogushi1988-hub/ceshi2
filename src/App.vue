@@ -1,24 +1,17 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue';
 import { 
-  RefreshCw, 
-  Calendar, 
-  Cpu, 
-  History, 
-  Fingerprint as FingerprintIcon, 
-  CheckCircle2, 
-  Loader2, 
-  Search, 
-  ChevronRight, 
-  Edit3, 
   X, 
   AlertTriangle, 
-  Plus,
-  Monitor,
   ShieldCheck,
-  Layout
+  Edit3,
+  Monitor,
+  ChevronRight,
+  Loader2
 } from 'lucide-vue-next';
 import { GoogleGenAI } from "@google/genai";
+import IntelligenceCenter from './components/IntelligenceCenter.vue';
+import CrawlModal from './components/CrawlModal.vue';
 
 // Types
 interface Fingerprint {
@@ -50,8 +43,6 @@ const limit = 10;
 
 const showCrawlModal = ref(false);
 const crawling = ref(false);
-const selectedPlatforms = ref<string[]>([]);
-const selectedBrowsers = ref<string[]>(['Chrome']);
 
 const availablePlatforms = ref([
   { name: 'Amazon', url: 'https://www.amazon.com' },
@@ -73,14 +64,6 @@ const availableBrowsers = ref([
   { name: 'Opera', config: 'Default Opera Config' },
   { name: 'Brave', config: 'Default Brave Config' }
 ]);
-
-const showAddPlatform = ref(false);
-const newPlatformName = ref('');
-const newPlatformUrl = ref('');
-
-const showAddBrowser = ref(false);
-const newBrowserName = ref('');
-const newBrowserConfig = ref('');
 
 const showLogsModal = ref(false);
 const tasks = ref<{ id: string, name: string, browser: string, status: 'success' | 'running' | 'failed', time: string }[]>([]);
@@ -120,12 +103,13 @@ const fetchFingerprints = async () => {
   }
 };
 
-const handleCrawl = async () => {
-  if (selectedPlatforms.value.length === 0 || selectedBrowsers.value.length === 0) return;
+const onCrawl = async (data: { platforms: string[], browsers: string[] }) => {
+  const { platforms, browsers } = data;
+  if (platforms.length === 0 || browsers.length === 0) return;
   crawling.value = true;
   
-  const initialTasks = selectedPlatforms.value.flatMap(p => 
-    selectedBrowsers.value.map(b => ({
+  const initialTasks = platforms.flatMap(p => 
+    browsers.map(b => ({
       id: Math.random().toString(36).substr(2, 9),
       name: p,
       browser: b,
@@ -137,9 +121,9 @@ const handleCrawl = async () => {
 
   try {
     const results = [];
-    for (const platformName of selectedPlatforms.value) {
+    for (const platformName of platforms) {
       const platform = availablePlatforms.value.find(p => p.name === platformName);
-      for (const browserName of selectedBrowsers.value) {
+      for (const browserName of browsers) {
         const prompt = `为电商平台 "${platformName}" 在浏览器 "${browserName}" 环境下生成一个真实的浏览器指纹检测逻辑。
         包含：
         1. 一个风控文件名（如 "sec.js", "risk.v2.js"）。
@@ -149,16 +133,16 @@ const handleCrawl = async () => {
         
         返回 JSON 格式，键名为：risk_file, content, logic, ai_annotation。`;
 
-        let data;
+        let aiData;
         try {
           const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: [{ parts: [{ text: prompt }] }],
             config: { responseMimeType: "application/json" }
           });
-          data = JSON.parse(response.text || "{}");
+          aiData = JSON.parse(response.text || "{}");
         } catch (err) {
-          data = {
+          aiData = {
             risk_file: `${platformName.toLowerCase()}_guard.js`,
             content: `{"fallback": true, "browser": "${browserName}", "reason": "AI_UNAVAILABLE"}`,
             logic: "function fallback() { return true; }",
@@ -170,7 +154,7 @@ const handleCrawl = async () => {
           platform: platformName,
           browser: browserName,
           url: platform?.url || `https://www.${platformName.toLowerCase()}.com`,
-          data
+          data: aiData
         });
       }
     }
@@ -185,8 +169,6 @@ const handleCrawl = async () => {
       page.value = 1;
       await fetchFingerprints();
       showCrawlModal.value = false;
-      selectedPlatforms.value = [];
-      selectedBrowsers.value = ['Chrome'];
       
       tasks.value = tasks.value.map(t => {
         const matched = results.find(r => r.platform === t.name && r.browser === t.browser && t.status === 'running');
@@ -199,6 +181,14 @@ const handleCrawl = async () => {
   } finally {
     crawling.value = false;
   }
+};
+
+const onAddPlatform = (platform: { name: string, url: string }) => {
+  availablePlatforms.value.push(platform);
+};
+
+const onAddBrowser = (browser: { name: string, config: string }) => {
+  availableBrowsers.value.push(browser);
 };
 
 const handleDetect = async (fp: Fingerprint) => {
@@ -265,42 +255,6 @@ const handleDetect = async (fp: Fingerprint) => {
   }
 };
 
-const addPlatform = () => {
-  if (!newPlatformName.value || !newPlatformUrl.value) return;
-  availablePlatforms.value.push({ name: newPlatformName.value, url: newPlatformUrl.value });
-  newPlatformName.value = '';
-  newPlatformUrl.value = '';
-  showAddPlatform.value = false;
-};
-
-const addBrowser = () => {
-  if (!newBrowserName.value || !newBrowserConfig.value) return;
-  availableBrowsers.value.push({ name: newBrowserName.value, config: newBrowserConfig.value });
-  newBrowserName.value = '';
-  newBrowserConfig.value = '';
-  showAddBrowser.value = false;
-};
-
-const togglePlatform = (p: string) => {
-  const index = selectedPlatforms.value.indexOf(p);
-  if (index > -1) selectedPlatforms.value.splice(index, 1);
-  else selectedPlatforms.value.push(p);
-};
-
-const toggleBrowser = (b: string) => {
-  const index = selectedBrowsers.value.indexOf(b);
-  if (index > -1) selectedBrowsers.value.splice(index, 1);
-  else selectedBrowsers.value.push(b);
-};
-
-const selectAllPlatforms = () => {
-  if (selectedPlatforms.value.length === availablePlatforms.value.length) {
-    selectedPlatforms.value = [];
-  } else {
-    selectedPlatforms.value = availablePlatforms.value.map(p => p.name);
-  }
-};
-
 const groupedFingerprints = computed(() => {
   return fingerprints.value.reduce((acc, fp) => {
     const key = `${fp.website}-${fp.url}`;
@@ -329,193 +283,32 @@ watch(page, () => {
 </script>
 
 <template>
-  <div class="min-h-screen p-8 max-w-7xl mx-auto font-sans selection:bg-ink selection:text-paper">
-    <!-- Header -->
-    <header class="flex justify-between items-end mb-12">
-      <div>
-        <h1 class="text-5xl font-serif italic mb-2">指纹情报系统 (Vue + Go)</h1>
-        <p class="text-sm opacity-60 uppercase tracking-widest">电商风控指纹采集与逻辑分析工具</p>
-      </div>
-      <div class="flex gap-4">
-        <button 
-          @click="fetchFingerprints"
-          class="p-3 border border-line/20 hover:bg-ink hover:text-paper transition-all"
-        >
-          <RefreshCw :size="18" :class="{ 'animate-spin': loading }" />
-        </button>
-        <button 
-          @click="showCrawlModal = true"
-          class="flex items-center gap-2 px-6 py-3 bg-ink text-paper rounded-none hover:opacity-90 transition-opacity shadow-[4px_4px_0px_0px_rgba(20,20,20,0.2)]"
-        >
-          <Calendar :size="18" />
-          <span class="text-sm font-bold tracking-wider">定时跑脚本</span>
-        </button>
-        <button 
-          @click="showLogsModal = true"
-          class="flex items-center gap-2 px-6 py-3 border border-ink rounded-none hover:bg-ink hover:text-paper transition-all group"
-        >
-          <History :size="18" />
-          <span class="text-sm font-bold tracking-wider">脚本日志</span>
-        </button>
-      </div>
-    </header>
-
-    <!-- Stats -->
-    <div class="grid grid-cols-4 gap-8 mb-12">
-      <div v-for="(stat, i) in [
-        { label: '覆盖平台', value: availablePlatforms.length, icon: Cpu },
-        { label: '活跃版本', value: '48', icon: History },
-        { label: '检测项总数', value: totalItems, icon: FingerprintIcon },
-        { label: '最后更新', value: '2小时前', icon: CheckCircle2 },
-      ]" :key="i" class="border-l border-line/20 pl-6 py-2 bg-white/20 hover:bg-white/40 transition-colors">
-        <div class="flex items-center gap-2 opacity-50 mb-1">
-          <component :is="stat.icon" :size="14" />
-          <span class="text-[10px] uppercase tracking-widest font-bold">{{ stat.label }}</span>
-        </div>
-        <div class="text-3xl font-mono font-bold">{{ stat.value }}</div>
-      </div>
-    </div>
-
-    <!-- Main List -->
-    <div class="bg-white/50 backdrop-blur-sm border border-line/10 shadow-xl overflow-hidden">
-      <div class="grid grid-cols-[60px_120px_100px_150px_180px_180px_1fr_80px] p-4 data-grid-header bg-ink/5 border-b border-line/10 text-[10px] uppercase tracking-widest font-bold opacity-50">
-        <div>ID</div>
-        <div>目标平台</div>
-        <div>浏览器环境</div>
-        <div>风控文件</div>
-        <div>指纹项内容</div>
-        <div>检测逻辑</div>
-        <div>AI 智能注解</div>
-        <div class="text-right">版本号</div>
-      </div>
-
-      <div v-if="loading" class="p-20 flex justify-center">
-        <Loader2 class="animate-spin opacity-20" :size="48" />
-      </div>
-      <div v-else class="divide-y divide-line/10">
-        <div v-for="(group, key) in groupedFingerprints" :key="key" class="flex flex-col">
-          <div class="bg-ink/[0.02] px-4 py-3 border-b border-line/5 flex items-center justify-between">
-            <div class="flex items-center gap-4">
-              <div class="flex items-center gap-2">
-                <Layout :size="14" class="opacity-30" />
-                <span class="text-xs font-bold">{{ group.website }}</span>
-              </div>
-              <span class="text-[10px] font-mono opacity-30 truncate max-w-[200px]">{{ group.url }}</span>
-            </div>
-            <div class="flex gap-4">
-              <button @click="handleOpenComparison(group)" class="text-[10px] uppercase tracking-widest font-bold opacity-40 hover:opacity-100 flex items-center gap-1 transition-all">
-                <Monitor :size="12" /> 采集环境对比
-              </button>
-              <button @click="handleDetect(group.items[0])" class="text-[10px] uppercase tracking-widest font-bold opacity-40 hover:opacity-100 flex items-center gap-1 transition-all">
-                <ShieldCheck :size="12" /> 逻辑检测
-              </button>
-            </div>
-          </div>
-
-          <div v-for="fp in group.items" :key="fp.id" class="grid grid-cols-[60px_120px_100px_150px_180px_180px_1fr_80px] p-4 items-center hover:bg-ink/[0.01] transition-colors group">
-            <div class="text-[10px] font-mono opacity-30">#{{ fp.id }}</div>
-            <div class="text-xs font-bold">{{ fp.website }}</div>
-            <div>
-              <span class="bg-ink/5 px-2 py-0.5 rounded text-[10px] font-bold uppercase">{{ fp.browser || 'Chrome' }}</span>
-            </div>
-            <div class="text-[10px] font-mono text-emerald-700 font-bold truncate pr-4">{{ fp.risk_file }}</div>
-            <div class="text-[10px] font-mono opacity-60 truncate pr-4">{{ fp.content }}</div>
-            <div class="text-[10px] font-mono opacity-60 truncate pr-4">{{ fp.logic }}</div>
-            <div class="text-xs line-clamp-1 opacity-80">{{ fp.ai_annotation }}</div>
-            <div class="text-right">
-              <span class="mono-value bg-ink/5 px-2 py-0.5 rounded text-[10px]">{{ fp.version }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Pagination -->
-      <div class="p-4 border-t border-line/10 flex justify-between items-center bg-white/30">
-        <div class="text-[10px] uppercase tracking-widest opacity-50 font-bold">
-          共 {{ totalItems }} 条记录 | 第 {{ page }} / {{ totalPages }} 页
-        </div>
-        <div class="flex gap-2">
-          <button 
-            @click="page = Math.max(1, page - 1)"
-            :disabled="page === 1"
-            class="px-4 py-2 border border-line/10 text-[10px] font-bold uppercase tracking-widest hover:bg-ink hover:text-paper disabled:opacity-20 transition-all"
-          >
-            上一页
-          </button>
-          <button 
-            @click="page = Math.min(totalPages, page + 1)"
-            :disabled="page === totalPages"
-            class="px-4 py-2 border border-line/10 text-[10px] font-bold uppercase tracking-widest hover:bg-ink hover:text-paper disabled:opacity-20 transition-all"
-          >
-            下一页
-          </button>
-        </div>
-      </div>
-    </div>
+  <div class="min-h-screen">
+    <IntelligenceCenter 
+      :fingerprints="fingerprints"
+      :grouped-fingerprints="groupedFingerprints"
+      :loading="loading"
+      v-model:page="page"
+      :total-items="totalItems"
+      :total-pages="totalPages"
+      :platform-count="availablePlatforms.length"
+      @refresh="fetchFingerprints"
+      @open-crawl="showCrawlModal = true"
+      @open-logs="showLogsModal = true"
+      @open-comparison="handleOpenComparison"
+      @open-detection="handleDetect"
+    />
 
     <!-- Modals -->
-    <div v-if="showCrawlModal" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div @click="showCrawlModal = false" class="absolute inset-0 bg-ink/40 backdrop-blur-sm"></div>
-      <div class="relative bg-paper w-full max-w-lg p-8 border border-line shadow-2xl">
-        <div class="flex justify-between items-center mb-6">
-          <h2 class="text-3xl font-serif italic">配置采集脚本</h2>
-          <button @click="selectAllPlatforms" class="text-[10px] uppercase tracking-widest font-bold border border-line/20 px-3 py-1 hover:bg-ink hover:text-paper transition-all">
-            {{ selectedPlatforms.length === availablePlatforms.length ? '取消全选' : '全选平台' }}
-          </button>
-        </div>
-
-        <div class="space-y-6">
-          <div>
-            <div class="flex justify-between items-center mb-3">
-              <h3 class="text-[10px] uppercase tracking-widest font-bold opacity-40">选择目标平台</h3>
-              <button @click="showAddPlatform = !showAddPlatform" class="text-[10px] text-ink/60 hover:text-ink flex items-center gap-1 font-bold uppercase tracking-widest">
-                <Plus :size="12" /> 新增平台
-              </button>
-            </div>
-            <div v-if="showAddPlatform" class="mb-4 p-4 bg-ink/5 border border-line/10 space-y-3">
-              <input v-model="newPlatformName" type="text" placeholder="平台名称" class="w-full p-2 text-xs border border-line/10 bg-white outline-none" />
-              <input v-model="newPlatformUrl" type="text" placeholder="目标 URL" class="w-full p-2 text-xs border border-line/10 bg-white outline-none" />
-              <button @click="addPlatform" class="w-full py-2 bg-ink text-paper text-[10px] font-bold uppercase tracking-widest">确认添加</button>
-            </div>
-            <div class="grid grid-cols-3 gap-3">
-              <button v-for="p in availablePlatforms" :key="p.name" @click="togglePlatform(p.name)" :class="['p-3 text-[11px] font-mono border transition-all text-left flex justify-between items-center', selectedPlatforms.includes(p.name) ? 'bg-ink text-paper border-ink' : 'bg-white border-line/10 hover:border-line']">
-                {{ p.name }}
-                <CheckCircle2 v-if="selectedPlatforms.includes(p.name)" :size="12" />
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <div class="flex justify-between items-center mb-3">
-              <h3 class="text-[10px] uppercase tracking-widest font-bold opacity-40">选择模拟浏览器</h3>
-              <button @click="showAddBrowser = !showAddBrowser" class="text-[10px] text-ink/60 hover:text-ink flex items-center gap-1 font-bold uppercase tracking-widest">
-                <Plus :size="12" /> 新增浏览器
-              </button>
-            </div>
-            <div v-if="showAddBrowser" class="mb-4 p-4 bg-ink/5 border border-line/10 space-y-3">
-              <input v-model="newBrowserName" type="text" placeholder="浏览器名称" class="w-full p-2 text-xs border border-line/10 bg-white outline-none" />
-              <textarea v-model="newBrowserConfig" placeholder="配置信息" class="w-full p-2 text-xs border border-line/10 bg-white outline-none h-20 resize-none"></textarea>
-              <button @click="addBrowser" class="w-full py-2 bg-ink text-paper text-[10px] font-bold uppercase tracking-widest">确认添加</button>
-            </div>
-            <div class="grid grid-cols-3 gap-3">
-              <button v-for="b in availableBrowsers" :key="b.name" @click="toggleBrowser(b.name)" :class="['p-3 text-[11px] font-mono border transition-all text-left flex justify-between items-center', selectedBrowsers.includes(b.name) ? 'bg-ink text-paper border-ink' : 'bg-white border-line/10 hover:border-line']">
-                {{ b.name }}
-                <CheckCircle2 v-if="selectedBrowsers.includes(b.name)" :size="12" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <button 
-          @click="handleCrawl"
-          :disabled="crawling || selectedPlatforms.length === 0"
-          class="w-full mt-8 py-4 bg-ink text-paper text-sm font-bold uppercase tracking-widest hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-3"
-        >
-          <Loader2 v-if="crawling" class="animate-spin" :size="18" />
-          {{ crawling ? '正在执行采集脚本...' : '立即开始采集' }}
-        </button>
-      </div>
-    </div>
+    <CrawlModal 
+      v-model:show="showCrawlModal"
+      :crawling="crawling"
+      :available-platforms="availablePlatforms"
+      :available-browsers="availableBrowsers"
+      @crawl="onCrawl"
+      @add-platform="onAddPlatform"
+      @add-browser="onAddBrowser"
+    />
 
     <!-- Logs Modal -->
     <div v-if="showLogsModal" class="fixed inset-0 z-[150] flex items-center justify-center p-4">
